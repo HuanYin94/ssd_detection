@@ -1,0 +1,6 @@
+<launch>
+
+  <node pkg="ssd_detection" type="ssd_detection" name="ssd_detection" output="screen"/>
+
+
+</launch>

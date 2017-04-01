@@ -1,0 +1,31 @@
+cmake_minimum_required(VERSION 2.8.3)
+project(ssd_detection)
+
+find_package(catkin REQUIRED COMPONENTS
+  roscpp
+  sensor_msgs
+  cmake_modules
+  tf
+  tf_conversions
+  nodelet
+)
+
+find_package(Eigen REQUIRED)
+
+find_package(Caffe)
+
+add_definitions(-std=c++11 -O2 -g -DNDEBUG)
+add_definitions(${Caffe_DEFINITIONS}) 
+
+include_directories(include)
+include_directories(
+  ${catkin_INCLUDE_DIRS}
+  ${EIGEN_INCLUDE_DIRS}
+)
+include_directories(${Caffe_INCLUDE_DIRS})
+
+add_executable(ssd_detection src/ssd_detection.cpp)
+target_link_libraries(ssd_detection 
+${catkin_LIBRARIES} 
+${Caffe_LIBRARIES}
+)
