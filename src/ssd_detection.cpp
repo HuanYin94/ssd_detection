@@ -17,6 +17,7 @@
 
 //added
 #include <boost/shared_ptr.hpp>
+#include "pointmatcher_ros/get_params_from_server.h" //getParam
 
 using namespace std;
 using namespace caffe;
@@ -34,91 +35,94 @@ DEFINE_string(out_file, "",
 DEFINE_double(confidence_threshold, 0.01,
     "Only store detections with score higher than the threshold.");
 
-class Detector {
- public:
-  Detector(const string& model_file,
+class Detector
+{
+public:
+    Detector(const string& model_file,
            const string& weights_file,
            const string& mean_file,
            const string& mean_value);
 
-  std::vector<vector<float> > Detect(const cv::Mat& img);
+    std::vector<vector<float> > Detect(const cv::Mat& img);
 
- private:
-  void SetMean(const string& mean_file, const string& mean_value);
+private:
+    void SetMean(const string& mean_file, const string& mean_value);
 
-  void WrapInputLayer(std::vector<cv::Mat>* input_channels);
+    void WrapInputLayer(std::vector<cv::Mat>* input_channels);
 
-  void Preprocess(const cv::Mat& img,
+    void Preprocess(const cv::Mat& img,
                   std::vector<cv::Mat>* input_channels);
 
- private:
-  boost::shared_ptr<Net<float> > net_;
-  cv::Size input_geometry_;
-  int num_channels_;
-  cv::Mat mean_;
+private:
+    boost::shared_ptr<Net<float> > net_;
+    cv::Size input_geometry_;
+    int num_channels_;
+    cv::Mat mean_;
 };
 
 Detector::Detector(const string& model_file,
                    const string& weights_file,
                    const string& mean_file,
-                   const string& mean_value) {
-#ifdef CPU_ONLY
-  Caffe::set_mode(Caffe::CPU);
-#else
-  Caffe::set_mode(Caffe::GPU);
-#endif
+                   const string& mean_value)
+{
+    //SET GPU DIRECTLY
+    Caffe::set_mode(Caffe::GPU);
 
-  /* Load the network. */
-  net_.reset(new Net<float>(model_file, TEST));
-  net_->CopyTrainedLayersFrom(weights_file);
+    /* Load the network. */
+    net_.reset(new Net<float>(model_file, TEST));
+    net_->CopyTrainedLayersFrom(weights_file);
 
-  CHECK_EQ(net_->num_inputs(), 1) << "Network should have exactly one input.";
-  CHECK_EQ(net_->num_outputs(), 1) << "Network should have exactly one output.";
+    CHECK_EQ(net_->num_inputs(), 1) << "Network should have exactly one input.";
+    CHECK_EQ(net_->num_outputs(), 1) << "Network should have exactly one output.";
 
-  Blob<float>* input_layer = net_->input_blobs()[0];
-  num_channels_ = input_layer->channels();
-  CHECK(num_channels_ == 3 || num_channels_ == 1)
+    Blob<float>* input_layer = net_->input_blobs()[0];
+    num_channels_ = input_layer->channels();
+    CHECK(num_channels_ == 3 || num_channels_ == 1)
     << "Input layer should have 1 or 3 channels.";
-  input_geometry_ = cv::Size(input_layer->width(), input_layer->height());
+    input_geometry_ = cv::Size(input_layer->width(), input_layer->height());
 
-  /* Load the binaryproto mean file. */
-  SetMean(mean_file, mean_value);
+    /* Load the binaryproto mean file. */
+    SetMean(mean_file, mean_value);
 }
 
-std::vector<vector<float> > Detector::Detect(const cv::Mat& img) {
-  Blob<float>* input_layer = net_->input_blobs()[0];
-  input_layer->Reshape(1, num_channels_,
+std::vector<vector<float> > Detector::Detect(const cv::Mat& img)
+{
+    Blob<float>* input_layer = net_->input_blobs()[0];
+    input_layer->Reshape(1, num_channels_,
                        input_geometry_.height, input_geometry_.width);
-  /* Forward dimension change to all layers. */
-  net_->Reshape();
+    /* Forward dimension change to all layers. */
+    net_->Reshape();
 
-  std::vector<cv::Mat> input_channels;
-  WrapInputLayer(&input_channels);
+    std::vector<cv::Mat> input_channels;
+    WrapInputLayer(&input_channels);
 
-  Preprocess(img, &input_channels);
+    Preprocess(img, &input_channels);
 
-  net_->Forward();
+    net_->Forward();
 
-  /* Copy the output layer to a std::vector */
-  Blob<float>* result_blob = net_->output_blobs()[0];
-  const float* result = result_blob->cpu_data();
-  const int num_det = result_blob->height();
-  vector<vector<float> > detections;
-  for (int k = 0; k < num_det; ++k) {
-    if (result[0] == -1) {
-      // Skip invalid detection.
-      result += 7;
-      continue;
+    /* Copy the output layer to a std::vector */
+    Blob<float>* result_blob = net_->output_blobs()[0];
+    const float* result = result_blob->cpu_data();
+    const int num_det = result_blob->height();
+    vector<vector<float> > detections;
+    for (int k = 0; k < num_det; ++k)
+    {
+        if (result[0] == -1)
+        {
+            // Skip invalid detection.
+            result += 7;
+            continue;
+        }
+        vector<float> detection(result, result + 7);
+        detections.push_back(detection);
+        result += 7;
     }
-    vector<float> detection(result, result + 7);
-    detections.push_back(detection);
-    result += 7;
-  }
-  return detections;
+    return detections;
 }
 
 /* Load the mean file in binaryproto format. */
-void Detector::SetMean(const string& mean_file, const string& mean_value) {
+void Detector::SetMean(const string& mean_file, const string& mean_value)
+{
   cv::Scalar channel_mean;
   if (!mean_file.empty()) {
     CHECK(mean_value.empty()) <<
@@ -233,29 +237,95 @@ void Detector::Preprocess(const cv::Mat& img,
     << "Input channels are not wrapping the input layer of the network.";
 }
 
+
+
+
 ///CAMERA CLASS : OUT THE DETECTOR
-class Camera {
+class CaffeNet {
 public:
-    Camera(ros::NodeHandle &n);
+    CaffeNet(ros::NodeHandle &n);
 private:
     ros::NodeHandle& n;
+    const string deployFileName;
+    const string caffeModelFileName;
+    const string picturesFileName;
 protected:
 
 };
 
-Camera::Camera(ros::NodeHandle& n):
-  n(n)
+CaffeNet::CaffeNet(ros::NodeHandle& n):
+  n(n),
+  deployFileName(getParam<string>("deployFileName", ".")),
+  caffeModelFileName(getParam<string>("caffeModelFileName", ".")),
+  picturesFileName(getParam<string>("picturesFileName", "."))
 {
-    cout<<"PRINT"<<endl;
+
+//temp for test
+{
+    FLAGS_alsologtostderr = 1;
+
+    const string& model_file = deployFileName;
+    const string& weights_file = caffeModelFileName;
+    const string& mean_file = FLAGS_mean_file;
+    const string& mean_value = FLAGS_mean_value;
+    const string& file_type = FLAGS_file_type;
+    const string& out_file = FLAGS_out_file;
+    const float confidence_threshold = FLAGS_confidence_threshold;
+
+    // Initialize the network.
+    Detector detector(model_file, weights_file, mean_file, mean_value);
+
+    // Set the output mode.
+    std::streambuf* buf = std::cout.rdbuf();
+    std::ofstream outfile;
+    if (!out_file.empty()) {
+      outfile.open(out_file.c_str());
+      if (outfile.good()) {
+        buf = outfile.rdbuf();
+      }
+    }
+    std::ostream out(buf);
+
+    // Process image one by one.
+    std::ifstream infile(picturesFileName);
+    std::string file;
+
+    while (infile >> file) {
+        if (file_type == "image") {
+          cv::Mat img = cv::imread(file, -1);
+          CHECK(!img.empty()) << "Unable to decode image " << file;
+          std::vector<vector<float> > detections = detector.Detect(img);
+
+          /* Print the detection results. */
+          for (int i = 0; i < detections.size(); ++i) {
+            const vector<float>& d = detections[i];
+            // Detection format: [image_id, label, score, xmin, ymin, xmax, ymax].
+            CHECK_EQ(d.size(), 7);
+            const float score = d[2];
+            if (score >= confidence_threshold) {
+              out << file << " ";
+              out << static_cast<int>(d[1]) << " ";
+              out << score << " ";
+              out << static_cast<int>(d[3] * img.cols) << " ";
+              out << static_cast<int>(d[4] * img.rows) << " ";
+              out << static_cast<int>(d[5] * img.cols) << " ";
+              out << static_cast<int>(d[6] * img.rows) << std::endl;
+            }
+          }
+        }
+    }
+
+}
+
+
+
 }
 
 int main(int argc, char **argv)
 {
     ros::init(argc, argv, "ssd_detection");
     ros::NodeHandle n;
-    Camera camera(n);
-
-    cout<<"PRINT"<<endl;
+    CaffeNet CaffeNet(n);
 
     ros::spin();
 

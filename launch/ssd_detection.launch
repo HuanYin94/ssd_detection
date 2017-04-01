@@ -1,6 +1,10 @@
 <launch>
 
-  <node pkg="ssd_detection" type="ssd_detection" name="ssd_detection" output="screen"/>
-
+  <node pkg="ssd_detection" type="ssd_detection" name="ssd_detection" output="screen">
+	<param name="deployFileName" value="/home/yh/caffe/models/VGGNet/VOC0712/SSD_600x180/deploy.prototxt"/>
+	<param name="caffeModelFileName" value="/home/yh/caffe/models/VGGNet/VOC0712/SSD_600x180/VGG_VOC0712_SSD_600x180_iter_60000.caffemodel"/>
+	<param name="picturesFileName" value="/home/yh/caffe/fileNames.txt"/>		
+	
+  </node>
 
 </launch>
