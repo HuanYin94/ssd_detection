@@ -5,10 +5,10 @@ find_package(catkin REQUIRED COMPONENTS
   roscpp
   sensor_msgs
   cmake_modules
-  tf
-  tf_conversions
   nodelet
   libpointmatcher_ros
+  image_transport
+  cv_bridge
 )
 
 find_package(Eigen REQUIRED)
