@@ -1,3 +1,22 @@
+/*
+ * How to build caffe with strong& robust cmake?
+ * I want to use libcaffe.so outside caffe.dir
+ *
+ * So, some notices:
+ * 1. MKL or ATLAS.
+ *    Intel MKL is faster, but ATLAS is apt-get install.
+ *
+ * 2. To use libcaffe.so, cmake_build is needed.
+ *
+ * 3. write_json is noted, ortherwise upgrate g++.
+ *    so, detection_output is disabled?
+ *
+ * 4. locate GPU / CPU-only carefully.
+ *
+ * 5. batch_size problem exists:  error == cudaSuccess (2 vs. 0)  out of memory
+ *
+ * --by Yin Huan in ZJU
+ * */
 #include "ros/ros.h"
 #include "ros/console.h"
 
