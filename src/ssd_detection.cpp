@@ -13,7 +13,8 @@
  *
  * 4. locate GPU / CPU-only carefully.
  *
- * 5. batch_size problem exists:  error == cudaSuccess (2 vs. 0)  out of memory
+ * 5. batch_size problem exists:  error == cudaSuccess (2 vs. 0)  out of memory??
+ *    Use the 600 * 180 instead
  *
  * --by Yin Huan in ZJU
  * */
@@ -51,7 +52,7 @@ DEFINE_string(file_type, "image",
     "The file type in the list_file. Currently support image and video.");
 DEFINE_string(out_file, "",
     "If provided, store the detection results in the out_file.");
-DEFINE_double(confidence_threshold, 0.01,
+DEFINE_double(confidence_threshold, 0.3,
     "Only store detections with score higher than the threshold.");
 
 class Detector
@@ -312,19 +313,26 @@ CaffeNet::CaffeNet(ros::NodeHandle& n):
     std::ifstream infile(picturesFileName);
     std::string file;
 
-    while (infile >> file) {
-        if (file_type == "image") {
+    //window set up
+    cv::namedWindow("imageShow");
+
+    while (infile >> file)
+    {
+        if (file_type == "image")
+        {
           cv::Mat img = cv::imread(file, -1);
           CHECK(!img.empty()) << "Unable to decode image " << file;
           std::vector<vector<float> > detections = detector.Detect(img);
 
           /* Print the detection results. */
-          for (int i = 0; i < detections.size(); ++i) {
+          for (int i = 0; i < detections.size(); ++i)
+          {
             const vector<float>& d = detections[i];
             // Detection format: [image_id, label, score, xmin, ymin, xmax, ymax].
             CHECK_EQ(d.size(), 7);
             const float score = d[2];
-            if (score >= confidence_threshold) {
+            if (score >= confidence_threshold)
+            {
               out << file << " ";
               out << static_cast<int>(d[1]) << " ";
               out << score << " ";
@@ -332,8 +340,22 @@ CaffeNet::CaffeNet(ros::NodeHandle& n):
               out << static_cast<int>(d[4] * img.rows) << " ";
               out << static_cast<int>(d[5] * img.cols) << " ";
               out << static_cast<int>(d[6] * img.rows) << std::endl;
+
+
+
+              //draw the rectangele
+              int lx = d[3] * img.cols;
+              int ly = d[4] * img.rows;
+              int rx = d[5] * img.cols;
+              int ry = d[6] * img.rows;
+              cv::rectangle( img, cvPoint(lx, ly), cvPoint(rx, ry), cvScalar(0, 0, 255), 2, 4, 0 );
+
             }
           }
+
+
+          cv::imshow("imageShow", img);
+          cv::waitKey(0.02);
         }
     }
 
