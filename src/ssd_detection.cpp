@@ -2,7 +2,7 @@
  * How to build caffe with strong& robust cmake?
  * I want to use libcaffe.so outside caffe.dir
  *
- * So, some notices:
+ * So, some notices & problems:
  * 1. MKL or ATLAS.
  *    Intel MKL is faster, but ATLAS is apt-get install.
  *
@@ -16,11 +16,16 @@
  * 5. batch_size problem exists:  error == cudaSuccess (2 vs. 0)  out of memory??
  *    Use the 600 * 180 instead
  *
+ * 6. cv_bridge -> opencv2/3?
+ *    fuck opencv !
+ *
+ * 7. finally change the opencv of caffe's cmakeLists
+ *    :(
+ *
  * --by Yin Huan in ZJU
  * */
 #include "ros/ros.h"
 #include "ros/console.h"
-#include "image_transport/image_transport.h"
 
 #include <caffe/caffe.hpp>
 
@@ -60,14 +65,41 @@ DEFINE_double(confidence_threshold, 0.3,
 class Detector
 {
 public:
+
+
+    std::vector<vector<float> > Detect(const cv::Mat& img);
+
+    //YH
+    static Detector * GetInstance()
+    {
+        return m_pInstance;
+    }
+
+    //YH
+    static Detector * initialized(const string& model_file,
+                       const string& weights_file,
+                       const string& mean_file,
+                       const string& mean_value)
+    {
+        if (m_pInstance == NULL)
+            m_pInstance = new Detector(model_file,
+                                   weights_file,
+                                   mean_file,
+                                   mean_value);
+
+        return m_pInstance;
+    }
+
+private:
+
     Detector(const string& model_file,
            const string& weights_file,
            const string& mean_file,
            const string& mean_value);
 
-    std::vector<vector<float> > Detect(const cv::Mat& img);
+    //dan li, YH
+    static Detector *m_pInstance;
 
-private:
     void SetMean(const string& mean_file, const string& mean_value);
 
     void WrapInputLayer(std::vector<cv::Mat>* input_channels);
@@ -75,12 +107,15 @@ private:
     void Preprocess(const cv::Mat& img,
                   std::vector<cv::Mat>* input_channels);
 
+
 private:
     boost::shared_ptr<Net<float> > net_;
     cv::Size input_geometry_;
     int num_channels_;
     cv::Mat mean_;
 };
+
+Detector* Detector::m_pInstance;
 
 Detector::Detector(const string& model_file,
                    const string& weights_file,
@@ -266,6 +301,7 @@ void Detector::Preprocess(const cv::Mat& img,
 
 
 ///CAMERA CLASS : OUT THE DETECTOR
+#if 0 //kitti benchmark detection, frame by frame
 class CaffeNet {
 public:
     CaffeNet(ros::NodeHandle &n);
@@ -274,13 +310,13 @@ private:
     const string deployFileName;
     const string caffeModelFileName;
     const string picturesFileName;
+    ros::Subscriber imageSub;
 
     void imageCallback(const sensor_msgs::ImageConstPtr& msg);
 protected:
 
 };
 
-#if 1 //kitti benchmark detection, frame by frame
 CaffeNet::CaffeNet(ros::NodeHandle& n):
   n(n),
   deployFileName(getParam<string>("deployFileName", ".")),
@@ -358,34 +394,13 @@ CaffeNet::CaffeNet(ros::NodeHandle& n):
 
 
           cv::imshow("imageShow", img);
-          cv::waitKey(0.02);
+          cv::waitKey(1000);
         }
     }
 
 
 }
 
-#else //for ROS bag from Tangli
-void imageCallback(const sensor_msgs::ImageConstPtr& msg)
-{
-    cout<<"recieve"<<endl;
-}
-
-CaffeNet::CaffeNet(ros::NodeHandle& n):
-  n(n),
-  deployFileName(getParam<string>("deployFileName", ".")),
-  caffeModelFileName(getParam<string>("caffeModelFileName", ".")),
-  picturesFileName(getParam<string>("picturesFileName", "."))
-{
-    image_transport::ImageTransport it(n);
-//    image_transport::Subscriber sub = it.subscribe("/camera/image_raw/compressed", 1, imageCallback);
-
-}
-
-
-#endif
-
-#if 1
 int main(int argc, char **argv)
 {
     ros::init(argc, argv, "ssd_detection");
@@ -397,30 +412,124 @@ int main(int argc, char **argv)
     return 0;
 }
 
-#else
-void imageCallback(const sensor_msgs::ImageConstPtr& msg)
+#else ///ROSBAG
+
+class CaffeNet {
+public:
+    CaffeNet(ros::NodeHandle &n);
+private:
+    ros::NodeHandle& n;
+    const string deployFileName;
+    const string caffeModelFileName;
+    const string picturesFileName;
+    ros::Subscriber imageSub;
+
+    void imageCallback(const sensor_msgs::ImageConstPtr& msg);
+
+    float confidence_threshold;
+protected:
+
+};
+
+
+CaffeNet::CaffeNet(ros::NodeHandle& n):
+  n(n),
+  deployFileName(getParam<string>("deployFileName", ".")),
+  caffeModelFileName(getParam<string>("caffeModelFileName", ".")),
+  picturesFileName(getParam<string>("picturesFileName", "."))
 {
-  cout<<"none"<<endl;
-  try
-  {
-    cv::imshow("view", cv_bridge::toCvShare(msg, "bgr8")->image);
-    cv::waitKey(30);
-  }
-  catch (cv_bridge::Exception& e)
-  {
-    ROS_ERROR("Could not convert from '%s' to 'bgr8'.", msg->encoding.c_str());
-  }
+    FLAGS_alsologtostderr = 1;
+
+    const string& model_file = deployFileName;
+    const string& weights_file = caffeModelFileName;
+    const string& mean_file = FLAGS_mean_file;
+    const string& mean_value = FLAGS_mean_value;
+    const string& out_file = FLAGS_out_file;
+    confidence_threshold = FLAGS_confidence_threshold;
+
+    // Initialize the network.
+    Detector *detector = Detector::initialized(model_file,
+                                               weights_file,
+                                               mean_file,
+                                               mean_value);
+
+    // Set the output mode.
+    std::streambuf* buf = std::cout.rdbuf();
+    std::ofstream outfile;
+    if (!out_file.empty()) {
+      outfile.open(out_file.c_str());
+      if (outfile.good()) {
+        buf = outfile.rdbuf();
+      }
+    }
+    std::ostream out(buf);
+
+    imageSub = n.subscribe("/camera/left/image_raw", 1, &CaffeNet::imageCallback, this);
+}
+
+void CaffeNet::imageCallback(const sensor_msgs::ImageConstPtr &msg)
+{
+    double t1 = ros::Time::now().toSec();
+
+    //window set up
+    cv::namedWindow("imageShow");
+
+    cv_bridge::CvImageConstPtr cv_ptr;
+    cv_ptr = cv_bridge::toCvCopy(msg, "bgr8");
+
+    cv::Mat img = cv_ptr->image;
+
+    CHECK(!img.empty()) << "Unable to decode image!!! ";
+    Detector inDetector = *Detector::GetInstance();
+    std::vector<vector<float> > detections = inDetector.Detect(img);
+
+    std::ostream out();
+
+    /* Print the detection results. */
+    for (int i = 0; i < detections.size(); ++i)
+    {
+        const vector<float>& d = detections[i];
+        // Detection format: [image_id, label, score, xmin, ymin, xmax, ymax].
+        CHECK_EQ(d.size(), 7);
+        const float score = d[2];
+        if (score >= confidence_threshold)
+        {
+//          out << file << " ";
+//          out << static_cast<int>(d[1]) << " ";
+//          out << score << " ";
+//          out << static_cast<int>(d[3] * img.cols) << " ";
+//          out << static_cast<int>(d[4] * img.rows) << " ";
+//          out << static_cast<int>(d[5] * img.cols) << " ";
+//          out << static_cast<int>(d[6] * img.rows) << std::endl;
+
+
+
+          //draw the rectangele
+          int lx = d[3] * img.cols;
+          int ly = d[4] * img.rows;
+          int rx = d[5] * img.cols;
+          int ry = d[6] * img.rows;
+          cv::rectangle( img, cvPoint(lx, ly), cvPoint(rx, ry), cvScalar(0, 0, 255), 2, 4, 0 );
+
+        }
+    }
+
+    cv::imshow("imageShow", img);
+    cv::waitKey(5);
+
+    double t2 = ros::Time::now().toSec();
+
+    cout<<"time:  "<<t2-t1<<endl;
+
 }
 
 int main(int argc, char **argv)
 {
   ros::init(argc, argv, "ssd_detection");
-  ros::NodeHandle nh;
-  cv::namedWindow("view");
-  cv::startWindowThread();
-  image_transport::ImageTransport it(nh);
-  image_transport::Subscriber sub = it.subscribe("/camera/image_raw/compressed", 1, imageCallback);
+  ros::NodeHandle n;
+  CaffeNet caffeNet(n);
+
   ros::spin();
-  cv::destroyWindow("view");
+  return 0;
 }
 #endif
