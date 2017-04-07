@@ -21,6 +21,12 @@
  *
  * 7. finally change the opencv of caffe's cmakeLists
  *    :(
+ *    3.0 -> 2.4.7
+ *
+ * 8. C++ getInstance() used
+ *
+ *    //important
+ *    Detector* Detector::m_pInstance;
  *
  * --by Yin Huan in ZJU
  * */
