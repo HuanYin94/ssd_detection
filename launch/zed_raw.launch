@@ -26,9 +26,9 @@
   <!--arg name="bag_file" default="/mnt/DataBlock/thomas/YQ/vision_exp/20170307/thomas_2017-03-07-18-07-21.bag"/-->
   <!--arg name="bag_file" default="/mnt/DataBlock/thomas/YQ/vision_exp/20170309/thomas_2017-03-09-09-06-05.bag"/-->
   <!--arg name="bag_file" default="/mnt/DataBlock/thomas/YQ/vision_exp/20170309/thomas_2017-03-09-10-03-57.bag"/-->
-  <arg name="bag_file" default="/home/yh/thomas_2017-03-09-11-25-40.bag"/>
+  <!--arg name="bag_file" default="/home/yh/thomas_2017-03-09-11-25-40.bag"/-->
   <!--arg name="bag_file" default="/mnt/DataBlock/thomas/YQ/vision_exp/20170309/thomas_2017-03-09-15-06-14.bag"/-->
-  <!--arg name="bag_file" default="/mnt/DataBlock/thomas/YQ/vision_exp/20170309/thomas_2017-03-09-16-31-34.bag"/-->
+  <arg name="bag_file" default="/home/yh/thomas_2017-03-09-16-31-34.bag"/>
 
 
   <!--Source: from live or decompress from bag-->

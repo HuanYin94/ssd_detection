@@ -41,7 +41,14 @@
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
 #include "opencv2/calib3d/calib3d.hpp"
+
 #include <cv_bridge/cv_bridge.h>  // needed in ros sensor -> cv::Mat
+#include <message_filters/subscriber.h>
+#include <message_filters/time_synchronizer.h>
+#include <message_filters/sync_policies/approximate_time.h>
+#include <sensor_msgs/Image.h>
+
+#include <boost/bind.hpp>
 
 #include <algorithm>
 #include <iomanip>
@@ -433,6 +440,8 @@ int main(int argc, char **argv)
 class CaffeNet {
 public:
     CaffeNet(ros::NodeHandle &n);
+    void imageLaserCallback(const sensor_msgs::ImageConstPtr &img, const sensor_msgs::PointCloud2ConstPtr &pcl);
+
 private:
     ros::NodeHandle& n;
     const string deployFileName;
@@ -454,9 +463,9 @@ private:
     bool detectionLocked = true;
     vector<vector<float>> detectionResults;
 
-    //imagesize
+    //image & size
+    cv::Mat image;
     int imageCols, imageRows;
-    Eigen::Vector2f laserPtToImgPt(Eigen::Vector3f inputXYZ);
 
     //calibration & Reference & projection
     cv::Mat cameraMat;
@@ -482,7 +491,6 @@ CaffeNet::CaffeNet(ros::NodeHandle& n):
     const string& weights_file = caffeModelFileName;
     const string& mean_file = FLAGS_mean_file;
     const string& mean_value = FLAGS_mean_value;
-    const string& out_file = FLAGS_out_file;
     confidence_threshold = FLAGS_confidence_threshold;
 
     // Initialize the network.
@@ -523,7 +531,7 @@ CaffeNet::CaffeNet(ros::NodeHandle& n):
 //    cout<<"After Rodrigues R: "<<rotaionVector<<endl;
 
 //    Eigen::Vector3d transMatrix = RtVelodyneToZed.block<3,1>(0,0);
-//    cout<<transMatrix<<endl;
+    //    cout<<transMatrix<<endl;
 
     cv::Mat rotationMat;
     cv::FileStorage fs(cameraFileName.c_str(), cv::FileStorage::READ);
@@ -534,6 +542,12 @@ CaffeNet::CaffeNet(ros::NodeHandle& n):
 
     cv::Rodrigues(rotationMat, rotaionVector);
 
+    ///ON THE THIRD SECTION
+//    message_filters::Subscriber<sensor_msgs::Image> imageSub(n, "/camera/left/image_raw", 1);
+//    message_filters::Subscriber<sensor_msgs::PointCloud2> laserSub(n, "/velodyne_points", 1);
+//    message_filters::TimeSynchronizer<sensor_msgs::Image, sensor_msgs::PointCloud2> sync(imageSub, laserSub, 10);
+//    sync.registerCallback(boost::bind(&CaffeNet::imageLaserCallback, this, _1, _2));
+
     imageSub = n.subscribe("/camera/left/image_raw", 1, &CaffeNet::imageCallback, this);
     laserSub = n.subscribe("/velodyne_points", 1, &CaffeNet::laserCallback, this);
     stampCloudPub = n.advertise<sensor_msgs::PointCloud2>("stamped_pointClouds", 2, true);
@@ -541,7 +555,7 @@ CaffeNet::CaffeNet(ros::NodeHandle& n):
 
 void CaffeNet::imageCallback(const sensor_msgs::ImageConstPtr &msg)
 {
-//    double t1 = ros::Time::now().toSec();
+    double t1 = ros::Time::now().toSec();
 
     //clear the detectionResults
     this->detectionResults.clear();
@@ -553,15 +567,11 @@ void CaffeNet::imageCallback(const sensor_msgs::ImageConstPtr &msg)
     cv_bridge::CvImageConstPtr cv_ptr;
     cv_ptr = cv_bridge::toCvCopy(msg, "bgr8");
 
-    cv::Mat img = cv_ptr->image;
+    image = cv_ptr->image;
 
-    //set cols & rows
-    this->imageCols = img.cols;
-    this->imageRows = img.rows;
-
-    CHECK(!img.empty()) << "Unable to decode image!!! ";
+    CHECK(!image.empty()) << "Unable to decode image!!! ";
     Detector inDetector = *Detector::GetInstance();
-    std::vector<vector<float> > detections = inDetector.Detect(img);
+    std::vector<vector<float> > detections = inDetector.Detect(image);
 
     /* Print the detection results. */
     for (int i = 0; i < detections.size(); ++i)
@@ -574,11 +584,11 @@ void CaffeNet::imageCallback(const sensor_msgs::ImageConstPtr &msg)
         {
 
           //draw the rectangele
-          int lx = d[3] * img.cols;
-          int ly = d[4] * img.rows;
-          int rx = d[5] * img.cols;
-          int ry = d[6] * img.rows;
-          cv::rectangle( img, cvPoint(lx, ly), cvPoint(rx, ry), cvScalar(0, 0, 255), 2, 4, 0 );
+          int lx = d[3] * image.cols;
+          int ly = d[4] * image.rows;
+          int rx = d[5] * image.cols;
+          int ry = d[6] * image.rows;
+          cv::rectangle( image, cvPoint(lx, ly), cvPoint(rx, ry), cvScalar(0, 0, 255), 2, 4, 0 );
 
           //push into results vector
           this->detectionResults.push_back(detections[i]);
@@ -586,12 +596,12 @@ void CaffeNet::imageCallback(const sensor_msgs::ImageConstPtr &msg)
         }
     }
 
-    cv::imshow("imageShow", img);
+    cv::imshow("imageShow", image);
     cv::waitKey(5);
 
-//    double t2 = ros::Time::now().toSec();
+    double t2 = ros::Time::now().toSec();
 
-//    cout<<"time:  "<<t2-t1<<endl;
+    cout<<"image  Time:  "<<t2-t1<<endl;
 
     //Finally, to the laser
     this->detectionLocked = false;
@@ -600,8 +610,10 @@ void CaffeNet::imageCallback(const sensor_msgs::ImageConstPtr &msg)
 
 void CaffeNet::laserCallback(const sensor_msgs::PointCloud2 &msg)
 {
-//    if(!detectionLocked)
-//    {
+    if(!detectionLocked)
+    {
+        double t1 = ros::Time::now().toSec();
+
         DP cloud = PointMatcher_ros::rosMsgToPointMatcherCloud<float>(msg);
 
         int numLaserPoints = cloud.features.cols();
@@ -632,15 +644,13 @@ void CaffeNet::laserCallback(const sensor_msgs::PointCloud2 &msg)
                               distCoeffsMat,
                               imageUV);
 
-//            cv::waitKey();
-
             for(int j = 0; j < detectionResults.size(); j++)
             {
                 const vector<float>& d = detectionResults.at(j);
-                int lx = d[3] * imageCols;
-                int ly = d[4] * imageRows;
-                int rx = d[5] * imageCols;
-                int ry = d[6] * imageRows;
+                int lx = d[3] * image.cols;
+                int ly = d[4] * image.rows;
+                int rx = d[5] * image.cols;
+                int ry = d[6] * image.rows;
 
                 if(imageUV.at<double>(0,0) > lx && imageUV.at<double>(0,0) < rx &&
                    imageUV.at<double>(0,1) > ly && imageUV.at<double>(0,1) < ry)
@@ -652,7 +662,11 @@ void CaffeNet::laserCallback(const sensor_msgs::PointCloud2 &msg)
         }
 
         stampCloudPub.publish(PointMatcher_ros::pointMatcherCloudToRosMsg<float>(cloud, "velodyne", ros::Time::now()));
-//    }
+
+        double t2 = ros::Time::now().toSec();
+
+        cout<<"laser  Time:  "<<t2-t1<<endl;
+    }
 }
 
 int main(int argc, char **argv)
@@ -664,4 +678,113 @@ int main(int argc, char **argv)
   ros::spin();
   return 0;
 }
+#endif
+
+#if 0
+///USING SYNC, DISABLE CLASS
+void imageLaserCallback(const sensor_msgs::ImageConstPtr &img, const sensor_msgs::PointCloud2ConstPtr &pcl)
+{
+  // Solve all of perception here...
+
+    vector<vector<float>> detectionResults;
+
+    cv::namedWindow("imageShow");
+
+    cv_bridge::CvImageConstPtr cv_ptr;
+    cv_ptr = cv_bridge::toCvCopy(img, "bgr8");
+
+    cv::Mat image = cv_ptr->image;
+
+    CHECK(!image.empty()) << "Unable to decode image!!! ";
+    Detector inDetector = *Detector::GetInstance();
+    std::vector<vector<float> > detections = inDetector.Detect(image);
+
+    /* Print the detection results. */
+    for (int i = 0; i < detections.size(); ++i)
+    {
+        const vector<float>& d = detections[i];
+        // Detection format: [image_id, label, score, xmin, ymin, xmax, ymax].
+        CHECK_EQ(d.size(), 7);
+        const float score = d[2];
+        if (score >= 0.3)
+        {
+
+          //draw the rectangele
+          int lx = d[3] * image.cols;
+          int ly = d[4] * image.rows;
+          int rx = d[5] * image.cols;
+          int ry = d[6] * image.rows;
+          cv::rectangle( image, cvPoint(lx, ly), cvPoint(rx, ry), cvScalar(0, 0, 255), 2, 4, 0 );
+
+          //push into results vector
+          detectionResults.push_back(detections[i]);
+
+        }
+    }
+
+    cv::imshow("imageShow", image);
+    cv::waitKey(5);
+
+   ///LASER
+
+
+}
+
+int main(int argc, char **argv)
+{
+  ros::init(argc, argv, "ssd_detection");
+  ros::NodeHandle n;
+//  CaffeNet caffeNet(n);
+
+  ///Initializaion Network
+  FLAGS_alsologtostderr = 1;
+
+  string deployFileName = getParam<string>("deployFileName", ".");
+  string caffeModelFileName = getParam<string>("caffeModelFileName", ".");
+  string calibrationFileName = getParam<string>("calibrationFileName", ".");
+  string cameraFileName = getParam<string>("cameraFileName", ".");
+
+  const string& model_file = deployFileName;
+  const string& weights_file = caffeModelFileName;
+  const string& mean_file = FLAGS_mean_file;
+  const string& mean_value = FLAGS_mean_value;
+
+  // Initialize the network.
+  Detector *detector = Detector::initialized(model_file,
+                                             weights_file,
+                                             mean_file,
+                                             mean_value);
+  ///Params
+  //calibration & Reference & projection
+  cv::Mat cameraMat;
+  cv::Mat distCoeffsMat;
+  cv::Mat rotaionVector;
+  cv::Mat translationMat;
+
+  cv::Mat rotationMat;
+  cv::FileStorage fs(cameraFileName.c_str(), cv::FileStorage::READ);
+  fs["camera_matrix"] >> cameraMat;
+  fs["distortion_coefficients"] >> distCoeffsMat;
+  fs["calib_rotation_matrix"] >> rotationMat;
+  fs["calib_translation_vector"] >> translationMat;
+
+  cv::Rodrigues(rotationMat, rotaionVector);
+
+  ///Synchronize
+  message_filters::Subscriber<sensor_msgs::Image> imageSub(n, "/camera/left/image_raw", 1);
+  message_filters::Subscriber<sensor_msgs::PointCloud2> laserSub(n, "/velodyne_points", 1);
+
+  //approximate
+  typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::Image, sensor_msgs::PointCloud2> MySyncPolicy;
+  message_filters::Synchronizer<MySyncPolicy> sync(MySyncPolicy(100), imageSub, laserSub);
+
+  //exact
+//  message_filters::TimeSynchronizer<sensor_msgs::Image, sensor_msgs::PointCloud2> sync(imageSub, laserSub, 10);
+
+  sync.registerCallback(boost::bind(&imageLaserCallback,  _1, _2));
+
+  ros::spin();
+  return 0;
+}
+
 #endif

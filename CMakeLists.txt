@@ -9,6 +9,7 @@ find_package(catkin REQUIRED COMPONENTS
   nodelet
   libpointmatcher_ros
   cv_bridge
+  message_filters
 )
 
 find_package(Eigen REQUIRED)

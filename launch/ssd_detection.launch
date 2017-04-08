@@ -1,6 +1,6 @@
 <launch>
 
-  <node pkg="ssd_detection" type="ssd_detection" name="ssd_detection" output="screen" launch-prefix="gdb -ex run --args">
+  <node pkg="ssd_detection" type="ssd_detection" name="ssd_detection" output="screen">
 	<param name="deployFileName" value="/home/yh/caffe/models/VGGNet/VOC0712/SSD_600x180/deploy.prototxt"/>
 	<!--param name="deployFileName" value="/home/yh/caffe/models/VGGNet/VOC0712.88/SSD_990x300/deploy.prototxt"/-->
 	<param name="caffeModelFileName" value="/home/yh/caffe/models/VGGNet/VOC0712/SSD_600x180/VGG_VOC0712_SSD_600x180_iter_60000.caffemodel"/>
