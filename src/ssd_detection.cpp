@@ -2,6 +2,8 @@
  * How to build caffe with strong& robust cmake?
  * I want to use libcaffe.so outside caffe.dir
  *
+ * KENG!
+ *
  * So, some notices & problems:
  * 1. MKL or ATLAS.
  *    Intel MKL is faster, but ATLAS is apt-get install.
@@ -29,6 +31,18 @@
  *    Detector* Detector::m_pInstance;
  *
  * 9. memcpy(cameraPara.data(), cameraMatrix.data, 3*3*sizeof(double));
+ *    from eigen to cv , or orther
+ *
+ * 10.finally use cv::Mat all the time, fuck!
+ *
+ * 11.There is sth. wrong on the wiki of cv::projectPoints, tthe input must be N*3 not 3*N !!!
+ *
+ * 12.Section 2 is not syncronized, Section3 for it
+ *
+ * 13.approximate_time is use, not the exact time (time_synchronizer)
+ *    and the function cannot be used in Class CaffeNet?!
+ *
+ * 14.Stop
  *
  * --by Yin Huan in ZJU
  * */
@@ -435,7 +449,7 @@ int main(int argc, char **argv)
     return 0;
 }
 
-#else ///ROSBAG VIDEO MODE
+#else ///ROSBAG VIDEO MODE, NO SYNC
 
 class CaffeNet {
 public:
@@ -532,6 +546,7 @@ CaffeNet::CaffeNet(ros::NodeHandle& n):
 
 //    Eigen::Vector3d transMatrix = RtVelodyneToZed.block<3,1>(0,0);
     //    cout<<transMatrix<<endl;
+    ///END OF FUCK
 
     cv::Mat rotationMat;
     cv::FileStorage fs(cameraFileName.c_str(), cv::FileStorage::READ);
@@ -541,12 +556,6 @@ CaffeNet::CaffeNet(ros::NodeHandle& n):
     fs["calib_translation_vector"] >> translationMat;
 
     cv::Rodrigues(rotationMat, rotaionVector);
-
-    ///ON THE THIRD SECTION
-//    message_filters::Subscriber<sensor_msgs::Image> imageSub(n, "/camera/left/image_raw", 1);
-//    message_filters::Subscriber<sensor_msgs::PointCloud2> laserSub(n, "/velodyne_points", 1);
-//    message_filters::TimeSynchronizer<sensor_msgs::Image, sensor_msgs::PointCloud2> sync(imageSub, laserSub, 10);
-//    sync.registerCallback(boost::bind(&CaffeNet::imageLaserCallback, this, _1, _2));
 
     imageSub = n.subscribe("/camera/left/image_raw", 1, &CaffeNet::imageCallback, this);
     laserSub = n.subscribe("/velodyne_points", 1, &CaffeNet::laserCallback, this);
@@ -682,6 +691,7 @@ int main(int argc, char **argv)
 
 #if 0
 ///USING SYNC, DISABLE CLASS
+/// FAILED!
 void imageLaserCallback(const sensor_msgs::ImageConstPtr &img, const sensor_msgs::PointCloud2ConstPtr &pcl)
 {
   // Solve all of perception here...
