@@ -28,6 +28,8 @@
  *    //important
  *    Detector* Detector::m_pInstance;
  *
+ * 9. memcpy(cameraPara.data(), cameraMatrix.data, 3*3*sizeof(double));
+ *
  * --by Yin Huan in ZJU
  * */
 #include "ros/ros.h"
@@ -38,7 +40,8 @@
 #include <opencv2/core/core.hpp>
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
-#include <cv_bridge/cv_bridge.h>
+#include "opencv2/calib3d/calib3d.hpp"
+#include <cv_bridge/cv_bridge.h>  // needed in ros sensor -> cv::Mat
 
 #include <algorithm>
 #include <iomanip>
@@ -52,8 +55,15 @@
 #include <boost/shared_ptr.hpp>
 #include "pointmatcher_ros/get_params_from_server.h" //getParam
 
+//libPM
+#include "pointmatcher_ros/point_cloud.h"
+#include "pointmatcher/PointMatcher.h"
+
 using namespace std;
 using namespace caffe;
+
+typedef PointMatcher<float> PM;
+typedef PM::DataPoints DP;
 
 DEFINE_string(mean_file, "",
     "The mean file used to subtract from the input image.");
@@ -307,7 +317,7 @@ void Detector::Preprocess(const cv::Mat& img,
 
 
 ///CAMERA CLASS : OUT THE DETECTOR
-#if 0 //kitti benchmark detection, frame by frame
+#if 0 //kitti benchmark detection, frame by frame, vision only
 class CaffeNet {
 public:
     CaffeNet(ros::NodeHandle &n);
@@ -418,7 +428,7 @@ int main(int argc, char **argv)
     return 0;
 }
 
-#else ///ROSBAG
+#else ///ROSBAG VIDEO MODE
 
 class CaffeNet {
 public:
@@ -427,12 +437,32 @@ private:
     ros::NodeHandle& n;
     const string deployFileName;
     const string caffeModelFileName;
-    const string picturesFileName;
+    const string picturesFileName;  //not used in video mode
+    const string calibrationFileName;  //wai can
+    const string cameraFileName;       //nei can
+
     ros::Subscriber imageSub;
+    ros::Subscriber laserSub;
+    ros::Publisher stampCloudPub;
 
     void imageCallback(const sensor_msgs::ImageConstPtr& msg);
+    void laserCallback(const sensor_msgs::PointCloud2& msg);
 
     float confidence_threshold;
+
+    //connections between vision & laser
+    bool detectionLocked = true;
+    vector<vector<float>> detectionResults;
+
+    //imagesize
+    int imageCols, imageRows;
+    Eigen::Vector2f laserPtToImgPt(Eigen::Vector3f inputXYZ);
+
+    //calibration & Reference & projection
+    cv::Mat cameraMat;
+    cv::Mat distCoeffsMat;
+    cv::Mat rotaionVector;
+    cv::Mat translationMat;
 protected:
 
 };
@@ -442,7 +472,9 @@ CaffeNet::CaffeNet(ros::NodeHandle& n):
   n(n),
   deployFileName(getParam<string>("deployFileName", ".")),
   caffeModelFileName(getParam<string>("caffeModelFileName", ".")),
-  picturesFileName(getParam<string>("picturesFileName", "."))
+  picturesFileName(getParam<string>("picturesFileName", ".")),
+  calibrationFileName(getParam<string>("calibrationFileName", ".")),
+  cameraFileName(getParam<string>("cameraFileName", "."))
 {
     FLAGS_alsologtostderr = 1;
 
@@ -460,22 +492,60 @@ CaffeNet::CaffeNet(ros::NodeHandle& n):
                                                mean_value);
 
     // Set the output mode.
-    std::streambuf* buf = std::cout.rdbuf();
-    std::ofstream outfile;
-    if (!out_file.empty()) {
-      outfile.open(out_file.c_str());
-      if (outfile.good()) {
-        buf = outfile.rdbuf();
-      }
-    }
-    std::ostream out(buf);
+    ///colsed by YH
+//    std::streambuf* buf = std::cout.rdbuf();
+//    std::ofstream outfile;
+//    if (!out_file.empty()) {
+//      outfile.open(out_file.c_str());
+//      if (outfile.good()) {
+//        buf = outfile.rdbuf();
+//      }
+//    }
+//    std::ostream out(buf);
+
+    //read parameters
+    ///FUCKING EIGEN & OPENCV::MAT!!!
+//    RtVelodyneToZed.setZero(4,4);
+//    ifstream in;
+//    in.open(calibrationFileName.c_str());
+//    for(int i = 0; i < 4; i++)
+//        for(int j = 0; j < 4; j++)
+//            in >> RtVelodyneToZed(i,j);
+//    in.close();
+
+//    Eigen::Matrix3d rotationMatrix = RtVelodyneToZed.block<3,3>(0,0);
+//    cv::Mat rotationMat;
+//    memcpy(rotationMat.data, rotationMatrix.data(), sizeof(rotationMatrix));
+//    cv::Rodrigues(rotationMat, rotaionVector);
+
+//    cout<<"R: "<<rotationMat<<endl;
+//    cout<<""<<endl;
+//    cout<<"After Rodrigues R: "<<rotaionVector<<endl;
+
+//    Eigen::Vector3d transMatrix = RtVelodyneToZed.block<3,1>(0,0);
+//    cout<<transMatrix<<endl;
+
+    cv::Mat rotationMat;
+    cv::FileStorage fs(cameraFileName.c_str(), cv::FileStorage::READ);
+    fs["camera_matrix"] >> cameraMat;
+    fs["distortion_coefficients"] >> distCoeffsMat;
+    fs["calib_rotation_matrix"] >> rotationMat;
+    fs["calib_translation_vector"] >> translationMat;
+
+    cv::Rodrigues(rotationMat, rotaionVector);
 
     imageSub = n.subscribe("/camera/left/image_raw", 1, &CaffeNet::imageCallback, this);
+    laserSub = n.subscribe("/velodyne_points", 1, &CaffeNet::laserCallback, this);
+    stampCloudPub = n.advertise<sensor_msgs::PointCloud2>("stamped_pointClouds", 2, true);
 }
 
 void CaffeNet::imageCallback(const sensor_msgs::ImageConstPtr &msg)
 {
-    double t1 = ros::Time::now().toSec();
+//    double t1 = ros::Time::now().toSec();
+
+    //clear the detectionResults
+    this->detectionResults.clear();
+    this->detectionLocked = true;
 
     //window set up
     cv::namedWindow("imageShow");
@@ -485,11 +555,13 @@ void CaffeNet::imageCallback(const sensor_msgs::ImageConstPtr &msg)
 
     cv::Mat img = cv_ptr->image;
 
+    //set cols & rows
+    this->imageCols = img.cols;
+    this->imageRows = img.rows;
+
     CHECK(!img.empty()) << "Unable to decode image!!! ";
     Detector inDetector = *Detector::GetInstance();
     std::vector<vector<float> > detections = inDetector.Detect(img);
-
-    std::ostream out();
 
     /* Print the detection results. */
     for (int i = 0; i < detections.size(); ++i)
@@ -500,15 +572,6 @@ void CaffeNet::imageCallback(const sensor_msgs::ImageConstPtr &msg)
         const float score = d[2];
         if (score >= confidence_threshold)
         {
-//          out << file << " ";
-//          out << static_cast<int>(d[1]) << " ";
-//          out << score << " ";
-//          out << static_cast<int>(d[3] * img.cols) << " ";
-//          out << static_cast<int>(d[4] * img.rows) << " ";
-//          out << static_cast<int>(d[5] * img.cols) << " ";
-//          out << static_cast<int>(d[6] * img.rows) << std::endl;
-
-
 
           //draw the rectangele
           int lx = d[3] * img.cols;
@@ -517,16 +580,79 @@ void CaffeNet::imageCallback(const sensor_msgs::ImageConstPtr &msg)
           int ry = d[6] * img.rows;
           cv::rectangle( img, cvPoint(lx, ly), cvPoint(rx, ry), cvScalar(0, 0, 255), 2, 4, 0 );
 
+          //push into results vector
+          this->detectionResults.push_back(detections[i]);
+
         }
     }
 
     cv::imshow("imageShow", img);
     cv::waitKey(5);
 
-    double t2 = ros::Time::now().toSec();
+//    double t2 = ros::Time::now().toSec();
 
-    cout<<"time:  "<<t2-t1<<endl;
+//    cout<<"time:  "<<t2-t1<<endl;
 
+    //Finally, to the laser
+    this->detectionLocked = false;
+
+}
+
+void CaffeNet::laserCallback(const sensor_msgs::PointCloud2 &msg)
+{
+//    if(!detectionLocked)
+//    {
+        DP cloud = PointMatcher_ros::rosMsgToPointMatcherCloud<float>(msg);
+
+        int numLaserPoints = cloud.features.cols();
+
+        cloud.addDescriptor("stamp_detection", PM::Matrix::Zero(1, numLaserPoints));
+
+        int stampRow = cloud.getDescriptorStartingRow("stamp_detection");
+
+        for(int i = 0; i < numLaserPoints; i++)
+        {
+            Eigen::Vector3f inputXYZ = cloud.features.col(i).head(3);
+
+            // filter the points behind the robot, x < 0
+            if(inputXYZ(0) < 0)
+                continue;
+
+            cv::Mat laserXYZ(1, 3, CV_64F);//DataType<float>::type);
+            laserXYZ.at<double>(0,0) = inputXYZ(0);
+            laserXYZ.at<double>(0,1) = inputXYZ(1);
+            laserXYZ.at<double>(0,2) = inputXYZ(2);
+
+            cv::Mat imageUV;
+
+            cv::projectPoints(laserXYZ,
+                              rotaionVector,
+                              translationMat,
+                              cameraMat,
+                              distCoeffsMat,
+                              imageUV);
+
+//            cv::waitKey();
+
+            for(int j = 0; j < detectionResults.size(); j++)
+            {
+                const vector<float>& d = detectionResults.at(j);
+                int lx = d[3] * imageCols;
+                int ly = d[4] * imageRows;
+                int rx = d[5] * imageCols;
+                int ry = d[6] * imageRows;
+
+                if(imageUV.at<double>(0,0) > lx && imageUV.at<double>(0,0) < rx &&
+                   imageUV.at<double>(0,1) > ly && imageUV.at<double>(0,1) < ry)
+                {
+                    cloud.descriptors(stampRow, i) = j + 1;   // :), to show
+                }
+
+            }
+        }
+
+        stampCloudPub.publish(PointMatcher_ros::pointMatcherCloudToRosMsg<float>(cloud, "velodyne", ros::Time::now()));
+//    }
 }
 
 int main(int argc, char **argv)
