@@ -71,6 +71,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <unistd.h>
 
 //added
 #include <boost/shared_ptr.hpp>
@@ -338,7 +339,9 @@ void Detector::Preprocess(const cv::Mat& img,
 
 
 ///CAMERA CLASS : OUT THE DETECTOR
-#if 0 //kitti benchmark detection, frame by frame, vision only
+#if 0
+///SECTION 1
+///kitti benchmark detection, frame by frame, vision only
 class CaffeNet {
 public:
     CaffeNet(ros::NodeHandle &n);
@@ -449,7 +452,11 @@ int main(int argc, char **argv)
     return 0;
 }
 
-#else ///ROSBAG VIDEO MODE, NO SYNC
+#endif
+
+#if 0
+///SECTION 2
+///ROSBAG VIDEO MODE, NO SYNC
 
 class CaffeNet {
 public:
@@ -689,9 +696,20 @@ int main(int argc, char **argv)
 }
 #endif
 
-#if 0
+#if 1
+///SECTION 2
 ///USING SYNC, DISABLE CLASS
-/// FAILED!
+///
+///
+
+//No Class, Set Outside
+cv::Mat cameraMat;
+cv::Mat distCoeffsMat;
+cv::Mat rotaionVector;
+cv::Mat translationMat;
+ros::Publisher stampCloudPub;
+
+
 void imageLaserCallback(const sensor_msgs::ImageConstPtr &img, const sensor_msgs::PointCloud2ConstPtr &pcl)
 {
   // Solve all of perception here...
@@ -735,23 +753,77 @@ void imageLaserCallback(const sensor_msgs::ImageConstPtr &img, const sensor_msgs
     cv::imshow("imageShow", image);
     cv::waitKey(5);
 
-   ///LASER
+    ///LASER
+    DP cloud = PointMatcher_ros::rosMsgToPointMatcherCloud<float>(*pcl);
 
+    int numLaserPoints = cloud.features.cols();
 
+    cloud.addDescriptor("stamp_detection", PM::Matrix::Zero(1, numLaserPoints));
+
+    int stampRow = cloud.getDescriptorStartingRow("stamp_detection");
+
+    cout<<detectionResults.size()<<endl;
+
+    for(int i = 0; i < numLaserPoints; i++)
+    {
+        Eigen::Vector3f inputXYZ = cloud.features.col(i).head(3);
+
+        // filter the points behind the robot, x < 0
+        if(inputXYZ(0) < 0)
+            continue;
+
+        cv::Mat laserXYZ(1, 3, CV_64F);//DataType<float>::type);
+        laserXYZ.at<double>(0,0) = inputXYZ(0);
+        laserXYZ.at<double>(0,1) = inputXYZ(1);
+        laserXYZ.at<double>(0,2) = inputXYZ(2);
+
+        cv::Mat imageUV;
+
+        cv::projectPoints(laserXYZ,
+                          rotaionVector,
+                          translationMat,
+                          cameraMat,
+                          distCoeffsMat,
+                          imageUV);
+
+        for(int j = 0; j < detectionResults.size(); j++)
+        {
+            const vector<float>& d = detectionResults.at(j);
+            int lx = d[3] * image.cols;
+            int ly = d[4] * image.rows;
+            int rx = d[5] * image.cols;
+            int ry = d[6] * image.rows;
+
+            if(imageUV.at<double>(0,0) > lx && imageUV.at<double>(0,0) < rx &&
+               imageUV.at<double>(0,1) > ly && imageUV.at<double>(0,1) < ry)
+            {
+                cloud.descriptors(stampRow, i) = j + 3;   // :), to show
+
+//                if(j == 0)
+//                {
+//                    cout<<inputXYZ.norm()<<endl;
+//                }
+            }
+
+        }
+    }
+
+    stampCloudPub.publish(PointMatcher_ros::pointMatcherCloudToRosMsg<float>(cloud, "velodyne", ros::Time::now()));
+
+//    sleep(5*1000);
 }
+
 
 int main(int argc, char **argv)
 {
   ros::init(argc, argv, "ssd_detection");
   ros::NodeHandle n;
-//  CaffeNet caffeNet(n);
 
   ///Initializaion Network
   FLAGS_alsologtostderr = 1;
 
   string deployFileName = getParam<string>("deployFileName", ".");
   string caffeModelFileName = getParam<string>("caffeModelFileName", ".");
-  string calibrationFileName = getParam<string>("calibrationFileName", ".");
   string cameraFileName = getParam<string>("cameraFileName", ".");
 
   const string& model_file = deployFileName;
@@ -766,11 +838,6 @@ int main(int argc, char **argv)
                                              mean_value);
   ///Params
   //calibration & Reference & projection
-  cv::Mat cameraMat;
-  cv::Mat distCoeffsMat;
-  cv::Mat rotaionVector;
-  cv::Mat translationMat;
-
   cv::Mat rotationMat;
   cv::FileStorage fs(cameraFileName.c_str(), cv::FileStorage::READ);
   fs["camera_matrix"] >> cameraMat;
@@ -780,6 +847,9 @@ int main(int argc, char **argv)
 
   cv::Rodrigues(rotationMat, rotaionVector);
 
+  ///Publish Cloud
+  stampCloudPub = n.advertise<sensor_msgs::PointCloud2>("stamped_pointClouds", 2, true);
+
   ///Synchronize
   message_filters::Subscriber<sensor_msgs::Image> imageSub(n, "/camera/left/image_raw", 1);
   message_filters::Subscriber<sensor_msgs::PointCloud2> laserSub(n, "/velodyne_points", 1);
@@ -788,7 +858,7 @@ int main(int argc, char **argv)
   typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::Image, sensor_msgs::PointCloud2> MySyncPolicy;
   message_filters::Synchronizer<MySyncPolicy> sync(MySyncPolicy(100), imageSub, laserSub);
 
-  //exact
+  //exact Time only?
 //  message_filters::TimeSynchronizer<sensor_msgs::Image, sensor_msgs::PointCloud2> sync(imageSub, laserSub, 10);
 
   sync.registerCallback(boost::bind(&imageLaserCallback,  _1, _2));
