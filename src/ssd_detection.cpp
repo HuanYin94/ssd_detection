@@ -697,7 +697,7 @@ int main(int argc, char **argv)
 #endif
 
 #if 1
-///SECTION 2
+///SECTION 3
 ///USING SYNC, DISABLE CLASS
 ///
 ///
@@ -723,6 +723,8 @@ void imageLaserCallback(const sensor_msgs::ImageConstPtr &img, const sensor_msgs
 
     cv::Mat image = cv_ptr->image;
 
+//    cout<<image.cols<<"  "<<image.rows<<endl;
+
     CHECK(!image.empty()) << "Unable to decode image!!! ";
     Detector inDetector = *Detector::GetInstance();
     std::vector<vector<float> > detections = inDetector.Detect(image);
@@ -742,16 +744,24 @@ void imageLaserCallback(const sensor_msgs::ImageConstPtr &img, const sensor_msgs
           int ly = d[4] * image.rows;
           int rx = d[5] * image.cols;
           int ry = d[6] * image.rows;
-          cv::rectangle( image, cvPoint(lx, ly), cvPoint(rx, ry), cvScalar(0, 0, 255), 2, 4, 0 );
+
+          //B-G-R
+          if(d[1] == 1) //car
+            cv::rectangle( image, cvPoint(lx, ly), cvPoint(rx, ry), cvScalar(0, 0, 255), 3, 4, 0 );
+          else if(d[1] == 2) //Cyclist
+            cv::rectangle( image, cvPoint(lx, ly), cvPoint(rx, ry), cvScalar(255, 0, 0), 3, 4, 0 );
+          else if(d[1] == 3) //Pedestrian
+            cv::rectangle( image, cvPoint(lx, ly), cvPoint(rx, ry), cvScalar(0, 255, 0), 3, 4, 0 );
+          else if(d[1] == 4) //Truck
+            cv::rectangle( image, cvPoint(lx, ly), cvPoint(rx, ry), cvScalar(65, 255, 255), 3, 4, 0 );
+          else if(d[1] == 5) //Van
+            cv::rectangle( image, cvPoint(lx, ly), cvPoint(rx, ry), cvScalar(255, 65, 255), 3, 4, 0 );
 
           //push into results vector
           detectionResults.push_back(detections[i]);
 
         }
     }
-
-    cv::imshow("imageShow", image);
-    cv::waitKey(5);
 
     ///LASER
     DP cloud = PointMatcher_ros::rosMsgToPointMatcherCloud<float>(*pcl);
@@ -762,7 +772,7 @@ void imageLaserCallback(const sensor_msgs::ImageConstPtr &img, const sensor_msgs
 
     int stampRow = cloud.getDescriptorStartingRow("stamp_detection");
 
-    cout<<detectionResults.size()<<endl;
+//    cout<<detectionResults.size()<<endl;
 
     for(int i = 0; i < numLaserPoints; i++)
     {
@@ -806,9 +816,20 @@ void imageLaserCallback(const sensor_msgs::ImageConstPtr &img, const sensor_msgs
             }
 
         }
+
+        CvPoint point;
+        point.x = int(imageUV.at<double>(0,0));
+        point.y = int(imageUV.at<double>(0,1));
+
+        cv::circle(image, point, 1, cv::Scalar(0, 255, 0));
+
     }
 
+    //Publish & Show
     stampCloudPub.publish(PointMatcher_ros::pointMatcherCloudToRosMsg<float>(cloud, "velodyne", ros::Time::now()));
+
+    cv::imshow("imageShow", image);
+    cv::waitKey(5);
 
 //    sleep(5*1000);
 }
