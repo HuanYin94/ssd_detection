@@ -81,6 +81,9 @@
 #include "pointmatcher_ros/point_cloud.h"
 #include "pointmatcher/PointMatcher.h"
 
+#define detcThreshold 0.3
+#define sectionNum 20
+
 using namespace std;
 using namespace caffe;
 
@@ -454,248 +457,6 @@ int main(int argc, char **argv)
 
 #endif
 
-#if 0
-///SECTION 2
-///ROSBAG VIDEO MODE, NO SYNC
-
-class CaffeNet {
-public:
-    CaffeNet(ros::NodeHandle &n);
-    void imageLaserCallback(const sensor_msgs::ImageConstPtr &img, const sensor_msgs::PointCloud2ConstPtr &pcl);
-
-private:
-    ros::NodeHandle& n;
-    const string deployFileName;
-    const string caffeModelFileName;
-    const string picturesFileName;  //not used in video mode
-    const string calibrationFileName;  //wai can
-    const string cameraFileName;       //nei can
-
-    ros::Subscriber imageSub;
-    ros::Subscriber laserSub;
-    ros::Publisher stampCloudPub;
-
-    void imageCallback(const sensor_msgs::ImageConstPtr& msg);
-    void laserCallback(const sensor_msgs::PointCloud2& msg);
-
-    float confidence_threshold;
-
-    //connections between vision & laser
-    bool detectionLocked = true;
-    vector<vector<float>> detectionResults;
-
-    //image & size
-    cv::Mat image;
-    int imageCols, imageRows;
-
-    //calibration & Reference & projection
-    cv::Mat cameraMat;
-    cv::Mat distCoeffsMat;
-    cv::Mat rotaionVector;
-    cv::Mat translationMat;
-protected:
-
-};
-
-
-CaffeNet::CaffeNet(ros::NodeHandle& n):
-  n(n),
-  deployFileName(getParam<string>("deployFileName", ".")),
-  caffeModelFileName(getParam<string>("caffeModelFileName", ".")),
-  picturesFileName(getParam<string>("picturesFileName", ".")),
-  calibrationFileName(getParam<string>("calibrationFileName", ".")),
-  cameraFileName(getParam<string>("cameraFileName", "."))
-{
-    FLAGS_alsologtostderr = 1;
-
-    const string& model_file = deployFileName;
-    const string& weights_file = caffeModelFileName;
-    const string& mean_file = FLAGS_mean_file;
-    const string& mean_value = FLAGS_mean_value;
-    confidence_threshold = FLAGS_confidence_threshold;
-
-    // Initialize the network.
-    Detector *detector = Detector::initialized(model_file,
-                                               weights_file,
-                                               mean_file,
-                                               mean_value);
-
-    // Set the output mode.
-    ///colsed by YH
-//    std::streambuf* buf = std::cout.rdbuf();
-//    std::ofstream outfile;
-//    if (!out_file.empty()) {
-//      outfile.open(out_file.c_str());
-//      if (outfile.good()) {
-//        buf = outfile.rdbuf();
-//      }
-//    }
-//    std::ostream out(buf);
-
-    //read parameters
-    ///FUCKING EIGEN & OPENCV::MAT!!!
-//    RtVelodyneToZed.setZero(4,4);
-//    ifstream in;
-//    in.open(calibrationFileName.c_str());
-//    for(int i = 0; i < 4; i++)
-//        for(int j = 0; j < 4; j++)
-//            in >> RtVelodyneToZed(i,j);
-//    in.close();
-
-//    Eigen::Matrix3d rotationMatrix = RtVelodyneToZed.block<3,3>(0,0);
-//    cv::Mat rotationMat;
-//    memcpy(rotationMat.data, rotationMatrix.data(), sizeof(rotationMatrix));
-//    cv::Rodrigues(rotationMat, rotaionVector);
-
-//    cout<<"R: "<<rotationMat<<endl;
-//    cout<<""<<endl;
-//    cout<<"After Rodrigues R: "<<rotaionVector<<endl;
-
-//    Eigen::Vector3d transMatrix = RtVelodyneToZed.block<3,1>(0,0);
-    //    cout<<transMatrix<<endl;
-    ///END OF FUCK
-
-    cv::Mat rotationMat;
-    cv::FileStorage fs(cameraFileName.c_str(), cv::FileStorage::READ);
-    fs["camera_matrix"] >> cameraMat;
-    fs["distortion_coefficients"] >> distCoeffsMat;
-    fs["calib_rotation_matrix"] >> rotationMat;
-    fs["calib_translation_vector"] >> translationMat;
-
-    cv::Rodrigues(rotationMat, rotaionVector);
-
-    imageSub = n.subscribe("/camera/left/image_raw", 1, &CaffeNet::imageCallback, this);
-    laserSub = n.subscribe("/velodyne_points", 1, &CaffeNet::laserCallback, this);
-    stampCloudPub = n.advertise<sensor_msgs::PointCloud2>("stamped_pointClouds", 2, true);
-}
-
-void CaffeNet::imageCallback(const sensor_msgs::ImageConstPtr &msg)
-{
-    double t1 = ros::Time::now().toSec();
-
-    //clear the detectionResults
-    this->detectionResults.clear();
-    this->detectionLocked = true;
-
-    //window set up
-    cv::namedWindow("imageShow");
-
-    cv_bridge::CvImageConstPtr cv_ptr;
-    cv_ptr = cv_bridge::toCvCopy(msg, "bgr8");
-
-    image = cv_ptr->image;
-
-    CHECK(!image.empty()) << "Unable to decode image!!! ";
-    Detector inDetector = *Detector::GetInstance();
-    std::vector<vector<float> > detections = inDetector.Detect(image);
-
-    /* Print the detection results. */
-    for (int i = 0; i < detections.size(); ++i)
-    {
-        const vector<float>& d = detections[i];
-        // Detection format: [image_id, label, score, xmin, ymin, xmax, ymax].
-        CHECK_EQ(d.size(), 7);
-        const float score = d[2];
-        if (score >= confidence_threshold)
-        {
-
-          //draw the rectangele
-          int lx = d[3] * image.cols;
-          int ly = d[4] * image.rows;
-          int rx = d[5] * image.cols;
-          int ry = d[6] * image.rows;
-          cv::rectangle( image, cvPoint(lx, ly), cvPoint(rx, ry), cvScalar(0, 0, 255), 2, 4, 0 );
-
-          //push into results vector
-          this->detectionResults.push_back(detections[i]);
-
-        }
-    }
-
-    cv::imshow("imageShow", image);
-    cv::waitKey(5);
-
-    double t2 = ros::Time::now().toSec();
-
-    cout<<"image  Time:  "<<t2-t1<<endl;
-
-    //Finally, to the laser
-    this->detectionLocked = false;
-
-}
-
-void CaffeNet::laserCallback(const sensor_msgs::PointCloud2 &msg)
-{
-    if(!detectionLocked)
-    {
-        double t1 = ros::Time::now().toSec();
-
-        DP cloud = PointMatcher_ros::rosMsgToPointMatcherCloud<float>(msg);
-
-        int numLaserPoints = cloud.features.cols();
-
-        cloud.addDescriptor("stamp_detection", PM::Matrix::Zero(1, numLaserPoints));
-
-        int stampRow = cloud.getDescriptorStartingRow("stamp_detection");
-
-        for(int i = 0; i < numLaserPoints; i++)
-        {
-            Eigen::Vector3f inputXYZ = cloud.features.col(i).head(3);
-
-            // filter the points behind the robot, x < 0
-            if(inputXYZ(0) < 0)
-                continue;
-
-            cv::Mat laserXYZ(1, 3, CV_64F);//DataType<float>::type);
-            laserXYZ.at<double>(0,0) = inputXYZ(0);
-            laserXYZ.at<double>(0,1) = inputXYZ(1);
-            laserXYZ.at<double>(0,2) = inputXYZ(2);
-
-            cv::Mat imageUV;
-
-            cv::projectPoints(laserXYZ,
-                              rotaionVector,
-                              translationMat,
-                              cameraMat,
-                              distCoeffsMat,
-                              imageUV);
-
-            for(int j = 0; j < detectionResults.size(); j++)
-            {
-                const vector<float>& d = detectionResults.at(j);
-                int lx = d[3] * image.cols;
-                int ly = d[4] * image.rows;
-                int rx = d[5] * image.cols;
-                int ry = d[6] * image.rows;
-
-                if(imageUV.at<double>(0,0) > lx && imageUV.at<double>(0,0) < rx &&
-                   imageUV.at<double>(0,1) > ly && imageUV.at<double>(0,1) < ry)
-                {
-                    cloud.descriptors(stampRow, i) = j + 1;   // :), to show
-                }
-
-            }
-        }
-
-        stampCloudPub.publish(PointMatcher_ros::pointMatcherCloudToRosMsg<float>(cloud, "velodyne", ros::Time::now()));
-
-        double t2 = ros::Time::now().toSec();
-
-        cout<<"laser  Time:  "<<t2-t1<<endl;
-    }
-}
-
-int main(int argc, char **argv)
-{
-  ros::init(argc, argv, "ssd_detection");
-  ros::NodeHandle n;
-  CaffeNet caffeNet(n);
-
-  ros::spin();
-  return 0;
-}
-#endif
-
 #if 1
 ///SECTION 3
 ///USING SYNC, DISABLE CLASS
@@ -712,6 +473,9 @@ ros::Publisher stampCloudPub;
 
 void imageLaserCallback(const sensor_msgs::ImageConstPtr &img, const sensor_msgs::PointCloud2ConstPtr &pcl)
 {
+
+    double t1 = ros::Time::now().toSec();
+
   // Solve all of perception here...
 
     vector<vector<float>> detectionResults;
@@ -736,7 +500,7 @@ void imageLaserCallback(const sensor_msgs::ImageConstPtr &img, const sensor_msgs
         // Detection format: [image_id, label, score, xmin, ymin, xmax, ymax].
         CHECK_EQ(d.size(), 7);
         const float score = d[2];
-        if (score >= 0.3)
+        if (score >= detcThreshold)
         {
 
           //draw the rectangele
@@ -746,11 +510,11 @@ void imageLaserCallback(const sensor_msgs::ImageConstPtr &img, const sensor_msgs
           int ry = d[6] * image.rows;
 
           //B-G-R
-          if(d[1] == 1) //car
+          if(d[1] == 1) //car red
             cv::rectangle( image, cvPoint(lx, ly), cvPoint(rx, ry), cvScalar(0, 0, 255), 3, 4, 0 );
-          else if(d[1] == 2) //Cyclist
+          else if(d[1] == 2) //Cyclist blue
             cv::rectangle( image, cvPoint(lx, ly), cvPoint(rx, ry), cvScalar(255, 0, 0), 3, 4, 0 );
-          else if(d[1] == 3) //Pedestrian
+          else if(d[1] == 3) //Pedestrian green
             cv::rectangle( image, cvPoint(lx, ly), cvPoint(rx, ry), cvScalar(0, 255, 0), 3, 4, 0 );
           else if(d[1] == 4) //Truck
             cv::rectangle( image, cvPoint(lx, ly), cvPoint(rx, ry), cvScalar(65, 255, 255), 3, 4, 0 );
@@ -763,16 +527,29 @@ void imageLaserCallback(const sensor_msgs::ImageConstPtr &img, const sensor_msgs
         }
     }
 
+    if(detectionResults.size() == 0)
+        return;
+
     ///LASER
     DP cloud = PointMatcher_ros::rosMsgToPointMatcherCloud<float>(*pcl);
+
+    //Publish to Lv
+    DP obstacleCloud(cloud.createSimilarEmpty());
+    int oCcount = 0;
+
+    //record sth
+    vector<int> stampedOstacle;
+    stampedOstacle.push_back(-1);
+    int car = 0;
+    int pedestrain = 0;
+    int cyclist = 0;
 
     int numLaserPoints = cloud.features.cols();
 
     cloud.addDescriptor("stamp_detection", PM::Matrix::Zero(1, numLaserPoints));
+    obstacleCloud.addDescriptor("stamp_detection", PM::Matrix::Zero(1, numLaserPoints));
 
     int stampRow = cloud.getDescriptorStartingRow("stamp_detection");
-
-//    cout<<detectionResults.size()<<endl;
 
     for(int i = 0; i < numLaserPoints; i++)
     {
@@ -799,6 +576,7 @@ void imageLaserCallback(const sensor_msgs::ImageConstPtr &img, const sensor_msgs
         for(int j = 0; j < detectionResults.size(); j++)
         {
             const vector<float>& d = detectionResults.at(j);
+
             int lx = d[3] * image.cols;
             int ly = d[4] * image.rows;
             int rx = d[5] * image.cols;
@@ -807,12 +585,53 @@ void imageLaserCallback(const sensor_msgs::ImageConstPtr &img, const sensor_msgs
             if(imageUV.at<double>(0,0) > lx && imageUV.at<double>(0,0) < rx &&
                imageUV.at<double>(0,1) > ly && imageUV.at<double>(0,1) < ry)
             {
-                cloud.descriptors(stampRow, i) = j + 3;   // :), to show
+                vector<int>::iterator it;
 
-//                if(j == 0)
-//                {
-//                    cout<<inputXYZ.norm()<<endl;
-//                }
+                it = find(stampedOstacle.begin(),
+                             stampedOstacle.end(),
+                             j);
+
+                if(it != stampedOstacle.end())
+                {
+                    //has
+                    //car || truck || van
+                    if(d[1] == 1 || d[1] == 4 || d[1] == 5)
+                         cloud.descriptors(stampRow, i) = car + sectionNum*0;   // :), to show
+                    //Cyclist
+                    else if(d[1] == 2)
+                         cloud.descriptors(stampRow, i) = cyclist + sectionNum*1;
+                    //Pedestrain
+                    else if(d[1] == 3)
+                         cloud.descriptors(stampRow, i) = pedestrain + sectionNum*2;
+                }
+                else
+                {
+                    //not found
+                    stampedOstacle.push_back(j);
+                    //car || truck || van
+                    if(d[1] == 1 || d[1] == 4 || d[1] == 5)
+                    {
+                        car++;
+                        cloud.descriptors(stampRow, i) = car + sectionNum*0;   // :), to show
+                    }
+                    //Cyclist
+                    else if(d[1] == 2)
+                    {
+                        cyclist++;
+                        cloud.descriptors(stampRow, i) = cyclist + sectionNum*1;
+                    }
+                    //Pedestrain
+                    else if(d[1] == 3)
+                    {
+                        pedestrain++;
+                        cloud.descriptors(stampRow, i) = pedestrain + sectionNum*2;
+                    }
+
+                }
+
+                obstacleCloud.setColFrom(oCcount, cloud, i);
+                oCcount++;
+                break;
             }
 
         }
@@ -825,11 +644,17 @@ void imageLaserCallback(const sensor_msgs::ImageConstPtr &img, const sensor_msgs
 
     }
 
+    obstacleCloud.conservativeResize(oCcount);
+
     //Publish & Show
-    stampCloudPub.publish(PointMatcher_ros::pointMatcherCloudToRosMsg<float>(cloud, "velodyne", ros::Time::now()));
+    stampCloudPub.publish(PointMatcher_ros::pointMatcherCloudToRosMsg<float>(obstacleCloud, "velodyne", ros::Time::now()));
 
     cv::imshow("imageShow", image);
     cv::waitKey(5);
+
+    double t2 = ros::Time::now().toSec();
+
+//    cout<<"Cost Time:  "<<t2-t1<<endl;
 
 //    sleep(5*1000);
 }
@@ -861,10 +686,12 @@ int main(int argc, char **argv)
   //calibration & Reference & projection
   cv::Mat rotationMat;
   cv::FileStorage fs(cameraFileName.c_str(), cv::FileStorage::READ);
-  fs["camera_matrix"] >> cameraMat;
-  fs["distortion_coefficients"] >> distCoeffsMat;
+  fs["projection_matrix"] >> cameraMat;
+//  fs["distortion_coefficients"] >> distCoeffsMat;
   fs["calib_rotation_matrix"] >> rotationMat;
   fs["calib_translation_vector"] >> translationMat;
+  distCoeffsMat = cv::Mat::zeros(1, 5, CV_32FC1);
+  cameraMat = cameraMat(cv::Rect(0,0,3,3));
 
   cv::Rodrigues(rotationMat, rotaionVector);
 
