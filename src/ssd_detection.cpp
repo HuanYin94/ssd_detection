@@ -527,9 +527,6 @@ void imageLaserCallback(const sensor_msgs::ImageConstPtr &img, const sensor_msgs
         }
     }
 
-    if(detectionResults.size() == 0)
-        return;
-
     ///LASER
     DP cloud = PointMatcher_ros::rosMsgToPointMatcherCloud<float>(*pcl);
 
@@ -540,6 +537,8 @@ void imageLaserCallback(const sensor_msgs::ImageConstPtr &img, const sensor_msgs
     //record sth
     vector<int> stampedOstacle;
     stampedOstacle.push_back(-1);
+
+    //count no.
     int car = 0;
     int pedestrain = 0;
     int cyclist = 0;
