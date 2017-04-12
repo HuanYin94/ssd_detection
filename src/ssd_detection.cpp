@@ -33,16 +33,18 @@
  * 9. memcpy(cameraPara.data(), cameraMatrix.data, 3*3*sizeof(double));
  *    from eigen to cv , or orther
  *
- * 10.finally use cv::Mat all the time, fuck!
+ * 10. finally use cv::Mat all the time, fuck!
  *
- * 11.There is sth. wrong on the wiki of cv::projectPoints, tthe input must be N*3 not 3*N !!!
+ * 11. There is sth. wrong on the wiki of cv::projectPoints, tthe input must be N*3 not 3*N !!!
  *
- * 12.Section 2 is not syncronized, Section3 for it
+ * 12. Section 2 is not syncronized, Section3 for it
  *
- * 13.approximate_time is use, not the exact time (time_synchronizer)
- *    and the function cannot be used in Class CaffeNet?!
+ * 13. approximate_time is use, not the exact time (time_synchronizer)
+ *     and the function cannot be used in Class CaffeNet?!
  *
- * 14.Stop
+ * 14. Stop
+ *
+ * 15. Thx to Tang Li and Li Dongxuan's help
  *
  * --by Yin Huan in ZJU
  * */
@@ -72,6 +74,7 @@
 #include <utility>
 #include <vector>
 #include <unistd.h>
+#include <map>
 
 //added
 #include <boost/shared_ptr.hpp>
@@ -82,7 +85,10 @@
 #include "pointmatcher/PointMatcher.h"
 
 #define detcThreshold 0.3
-#define sectionNum 20
+#define sectionNum 20   //1-20: Cars    21-40： Cyclists     41-60: Pedistrains
+#define carLength 3.0
+#define cycLength 2.0
+#define pedLength 1.0
 
 using namespace std;
 using namespace caffe;
@@ -538,6 +544,9 @@ void imageLaserCallback(const sensor_msgs::ImageConstPtr &img, const sensor_msgs
     vector<int> stampedOstacle;
     stampedOstacle.push_back(-1);
 
+    //filter the background point clouds
+    map<int, float> obstacleNearestDis;
+
     //count no.
     int car = 0;
     int pedestrain = 0;
@@ -546,6 +555,7 @@ void imageLaserCallback(const sensor_msgs::ImageConstPtr &img, const sensor_msgs
     int numLaserPoints = cloud.features.cols();
 
     cloud.addDescriptor("stamp_detection", PM::Matrix::Zero(1, numLaserPoints));
+    //also needed in the new point cloud
     obstacleCloud.addDescriptor("stamp_detection", PM::Matrix::Zero(1, numLaserPoints));
 
     int stampRow = cloud.getDescriptorStartingRow("stamp_detection");
@@ -586,47 +596,62 @@ void imageLaserCallback(const sensor_msgs::ImageConstPtr &img, const sensor_msgs
             {
                 vector<int>::iterator it;
 
+                //find out if a new obstacle is coming
                 it = find(stampedOstacle.begin(),
                              stampedOstacle.end(),
                              j);
+
+                //No. of Obstacle
+                int obstacleNo;
 
                 if(it != stampedOstacle.end())
                 {
                     //has
                     //car || truck || van
                     if(d[1] == 1 || d[1] == 4 || d[1] == 5)
-                         cloud.descriptors(stampRow, i) = car + sectionNum*0;   // :), to show
+                         obstacleNo = car + sectionNum*0;   // :), to show
                     //Cyclist
                     else if(d[1] == 2)
-                         cloud.descriptors(stampRow, i) = cyclist + sectionNum*1;
+                         obstacleNo = cyclist + sectionNum*1;
                     //Pedestrain
                     else if(d[1] == 3)
-                         cloud.descriptors(stampRow, i) = pedestrain + sectionNum*2;
+                         obstacleNo = pedestrain + sectionNum*2;
+
+                    //set the nearest range distance
+                    if(obstacleNearestDis[obstacleNo] > inputXYZ.norm())
+                        obstacleNearestDis[obstacleNo] = inputXYZ.norm();
+
                 }
                 else
                 {
                     //not found
                     stampedOstacle.push_back(j);
+
                     //car || truck || van
                     if(d[1] == 1 || d[1] == 4 || d[1] == 5)
                     {
                         car++;
-                        cloud.descriptors(stampRow, i) = car + sectionNum*0;   // :), to show
+                        obstacleNo = car + sectionNum*0;   // :), to show
                     }
                     //Cyclist
                     else if(d[1] == 2)
                     {
                         cyclist++;
-                        cloud.descriptors(stampRow, i) = cyclist + sectionNum*1;
+                        obstacleNo = cyclist + sectionNum*1;
                     }
                     //Pedestrain
                     else if(d[1] == 3)
                     {
                         pedestrain++;
-                        cloud.descriptors(stampRow, i) = pedestrain + sectionNum*2;
+                        obstacleNo = pedestrain + sectionNum*2;
                     }
 
+                    //set the nearest range distance
+                    obstacleNearestDis[obstacleNo] = inputXYZ.norm();
+
                 }
+
+                cloud.descriptors(stampRow, i) = obstacleNo;
 
                 obstacleCloud.setColFrom(oCcount, cloud, i);
                 oCcount++;
@@ -639,14 +664,60 @@ void imageLaserCallback(const sensor_msgs::ImageConstPtr &img, const sensor_msgs
         point.x = int(imageUV.at<double>(0,0));
         point.y = int(imageUV.at<double>(0,1));
 
-        cv::circle(image, point, 1, cv::Scalar(0, 255, 0));
+        cv::circle(image, point, 0.5, cv::Scalar(0, 255, 0));
 
     }
 
     obstacleCloud.conservativeResize(oCcount);
 
+    DP obstacleFilterCloud(obstacleCloud.createSimilarEmpty());
+
+#if 1
+    //filer the background points according to the nearest range
+    {
+        for(int i = 0; i < obstacleCloud.features.cols(); i++)
+        {
+            Eigen::Vector3f inputXYZ = obstacleCloud.features.col(i).head(3);
+
+            int obstacleNo = obstacleCloud.descriptors(stampRow, i);
+            float length = 99;
+
+            if(obstacleNo >= 1 && obstacleNo <= 20)
+                length = carLength;
+            else if(obstacleNo >= 21 && obstacleNo <= 40)
+                length = cycLength;
+            else if(obstacleNo >= 41)
+                length = pedLength;
+
+            if(inputXYZ.norm() > (obstacleNearestDis[obstacleNo] + length))
+                obstacleCloud.descriptors(stampRow, i) = -99;   // the point needs to be deleted
+            else
+                continue;
+        }
+
+        obstacleFilterCloud.addDescriptor("stamp_detection", PM::Matrix::Zero(1, obstacleCloud.features.cols()));
+
+        int count = 0;
+
+        for(int i = 0; i < obstacleCloud.features.cols(); i++)
+        {
+            if(obstacleCloud.descriptors(stampRow, i) > 0)
+            {
+                obstacleFilterCloud.setColFrom(count, obstacleCloud, i);
+                count++;
+            }
+        }
+
+        obstacleFilterCloud.conservativeResize(count);
+
+    }
+
+#endif
+
+    cout<<obstacleCloud.features.cols() - obstacleFilterCloud.features.cols()<<endl;
+
     //Publish & Show
-    stampCloudPub.publish(PointMatcher_ros::pointMatcherCloudToRosMsg<float>(obstacleCloud, "velodyne", ros::Time::now()));
+    stampCloudPub.publish(PointMatcher_ros::pointMatcherCloudToRosMsg<float>(obstacleFilterCloud, "velodyne", ros::Time::now()));
 
     cv::imshow("imageShow", image);
     cv::waitKey(5);
@@ -685,10 +756,12 @@ int main(int argc, char **argv)
   //calibration & Reference & projection
   cv::Mat rotationMat;
   cv::FileStorage fs(cameraFileName.c_str(), cv::FileStorage::READ);
-  fs["projection_matrix"] >> cameraMat;
+  fs["projection_matrix"] >> cameraMat;  //Not the camera matrix
 //  fs["distortion_coefficients"] >> distCoeffsMat;
   fs["calib_rotation_matrix"] >> rotationMat;
   fs["calib_translation_vector"] >> translationMat;
+
+  //After Rectified
   distCoeffsMat = cv::Mat::zeros(1, 5, CV_32FC1);
   cameraMat = cameraMat(cv::Rect(0,0,3,3));
 

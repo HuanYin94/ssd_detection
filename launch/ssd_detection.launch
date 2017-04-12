@@ -14,7 +14,7 @@
 <node pkg="rviz" type="rviz" name="rviz" args="-d $(find ssd_detection)/script/cloud.rviz" output="screen"/>
 
 
-<!-- zed_launch -->
+<!-- zed_launch DELETE IF COUT IS NEEDED-->
 
   <arg name="pi/2" value="1.5707963267948966" />
   <arg name="online" default="false"/>
