@@ -84,7 +84,7 @@
 #include "pointmatcher_ros/point_cloud.h"
 #include "pointmatcher/PointMatcher.h"
 
-#define detcThreshold 0.3
+#define detcThreshold 0.6
 #define sectionNum 20   //1-20: Cars    21-40： Cyclists     41-60: Pedistrains
 #define carLength 3.0
 #define cycLength 2.0
@@ -713,8 +713,6 @@ void imageLaserCallback(const sensor_msgs::ImageConstPtr &img, const sensor_msgs
     }
 
 #endif
-
-    cout<<obstacleCloud.features.cols() - obstacleFilterCloud.features.cols()<<endl;
 
     //Publish & Show
     stampCloudPub.publish(PointMatcher_ros::pointMatcherCloudToRosMsg<float>(obstacleFilterCloud, "velodyne", ros::Time::now()));

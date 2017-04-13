@@ -22,7 +22,7 @@
   <arg name="rate" default="1.0" />
   <arg name="need_split" default="true" />
 
-  <arg name="bag_file" default="/home/yh/thomas_2017-03-09-16-31-34.bag"/>
+  <arg name="bag_file" default="/home/yh/thomas_2017-03-09-11-25-40.bag"/>
 
 
   <!--Source: from live or decompress from bag-->
