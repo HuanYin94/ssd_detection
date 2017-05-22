@@ -1,0 +1,10 @@
+<launch>
+
+  <node pkg="ssd_detection" type="projection" name="projection" output="screen">	
+	<param name="picName" value="/home/yh/pic.png"/>
+	<param name="vtkName" value="/home/yh/pcl.vtk"/>
+	<param name="cameraFileName" value="$(find ssd_detection)/script/left_opencv.yaml"/>
+
+  </node>
+
+</launch>

@@ -46,3 +46,10 @@ ${OpenCV_LIBS}
 #/opt/ros/indigo/lib/libopencv_videoio3.so 
 #/home/yh/opencv/build/lib/libopencv_imgcodecs.so
 )
+
+add_executable(projection src/projection.cpp)
+target_link_libraries(projection
+${catkin_LIBRARIES} 
+${libpointmatcher_LIBRARIES}
+${OpenCV_LIBS}
+)

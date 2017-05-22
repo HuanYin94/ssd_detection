@@ -516,6 +516,7 @@ void imageLaserCallback(const sensor_msgs::ImageConstPtr &img, const sensor_msgs
           int ry = d[6] * image.rows;
 
           //B-G-R
+
           if(d[1] == 1) //car red
             cv::rectangle( image, cvPoint(lx, ly), cvPoint(rx, ry), cvScalar(0, 0, 255), 3, 4, 0 );
           else if(d[1] == 2) //Cyclist blue
@@ -527,11 +528,16 @@ void imageLaserCallback(const sensor_msgs::ImageConstPtr &img, const sensor_msgs
           else if(d[1] == 5) //Van
             cv::rectangle( image, cvPoint(lx, ly), cvPoint(rx, ry), cvScalar(255, 65, 255), 3, 4, 0 );
 
+
+
           //push into results vector
           detectionResults.push_back(detections[i]);
 
         }
     }
+
+    ///save the origin image
+    cv::imwrite("/home/yh/originImage.png", image);
 
     ///LASER
     DP cloud = PointMatcher_ros::rosMsgToPointMatcherCloud<float>(*pcl);
@@ -559,6 +565,9 @@ void imageLaserCallback(const sensor_msgs::ImageConstPtr &img, const sensor_msgs
     obstacleCloud.addDescriptor("stamp_detection", PM::Matrix::Zero(1, numLaserPoints));
 
     int stampRow = cloud.getDescriptorStartingRow("stamp_detection");
+
+#if 0
+    ///original thinking
 
     for(int i = 0; i < numLaserPoints; i++)
     {
@@ -670,9 +679,130 @@ void imageLaserCallback(const sensor_msgs::ImageConstPtr &img, const sensor_msgs
 
     obstacleCloud.conservativeResize(oCcount);
 
-    DP obstacleFilterCloud(obstacleCloud.createSimilarEmpty());
+#else
+
+    ///Projection Once! Another r
+
+    cv::Mat laserXYZ(numLaserPoints, 3, CV_64F);
+
+    for(int i = 0; i < numLaserPoints; i++)
+    {
+        laserXYZ.at<double>(i, 0) = cloud.features(0, i);
+        laserXYZ.at<double>(i, 1) = cloud.features(1, i);
+        laserXYZ.at<double>(i, 2) = cloud.features(2, i);
+    }
+
+    cv::Mat imageUV;
+
+    cv::projectPoints(laserXYZ,
+                      rotaionVector,
+                      translationMat,
+                      cameraMat,
+                      distCoeffsMat,
+                      imageUV);
+
+    for(int i = 0; i < numLaserPoints; i++)
+    {
+
+        //filter double projected
+        if(cloud.features(0, i) < 0)
+            continue;
+
+        // to draw
+        CvPoint point;
+        point.x = int(imageUV.at<double>(i, 0));
+        point.y = int(imageUV.at<double>(i, 1));
+
+        cv::circle(image, point, 1.50, cv::Scalar(0, 255, 0));
+
+        Eigen::Vector3f inputXYZ = cloud.features.col(i).head(3);
+
+        for(int j = 0; j < detectionResults.size(); j++)
+        {
+            const vector<float>& d = detectionResults.at(j);
+
+            int lx = d[3] * image.cols;
+            int ly = d[4] * image.rows;
+            int rx = d[5] * image.cols;
+            int ry = d[6] * image.rows;
+
+            if(imageUV.at<double>(i, 0) > lx && imageUV.at<double>(i, 0) < rx &&
+               imageUV.at<double>(i, 1) > ly && imageUV.at<double>(i, 1) < ry)
+            {
+                vector<int>::iterator it;
+
+                //find out if a new obstacle is coming
+                it = find(stampedOstacle.begin(),
+                             stampedOstacle.end(),
+                             j);
+
+                //No. of Obstacle
+                int obstacleNo;
+
+                if(it != stampedOstacle.end())
+                {
+                    //has
+                    //car || truck || van
+                    if(d[1] == 1 || d[1] == 4 || d[1] == 5)
+                         obstacleNo = car + sectionNum*0;   // :), to show
+                    //Cyclist
+                    else if(d[1] == 2)
+                         obstacleNo = cyclist + sectionNum*1;
+                    //Pedestrain
+                    else if(d[1] == 3)
+                         obstacleNo = pedestrain + sectionNum*2;
+
+                    //set the nearest range distance
+                    if(obstacleNearestDis[obstacleNo] > inputXYZ.norm())
+                        obstacleNearestDis[obstacleNo] = inputXYZ.norm();
+
+                }
+                else
+                {
+                    //not found
+                    stampedOstacle.push_back(j);
+
+                    //car || truck || van
+                    if(d[1] == 1 || d[1] == 4 || d[1] == 5)
+                    {
+                        car++;
+                        obstacleNo = car + sectionNum*0;   // :), to show
+                    }
+                    //Cyclist
+                    else if(d[1] == 2)
+                    {
+                        cyclist++;
+                        obstacleNo = cyclist + sectionNum*1;
+                    }
+                    //Pedestrain
+                    else if(d[1] == 3)
+                    {
+                        pedestrain++;
+                        obstacleNo = pedestrain + sectionNum*2;
+                    }
+
+                    //set the nearest range distance
+                    obstacleNearestDis[obstacleNo] = inputXYZ.norm();
+
+                }
+
+                cloud.descriptors(stampRow, i) = obstacleNo;
+
+                obstacleCloud.setColFrom(oCcount, cloud, i);
+                oCcount++;
+                break;
+            }
+        }
+    }
+
+    obstacleCloud.conservativeResize(oCcount);
+
+#endif
 
 #if 1
+    ///needed!
+    DP obstacleFilterCloud(obstacleCloud.createSimilarEmpty());
+
     //filer the background points according to the nearest range
     {
         for(int i = 0; i < obstacleCloud.features.cols(); i++)
@@ -722,7 +852,10 @@ void imageLaserCallback(const sensor_msgs::ImageConstPtr &img, const sensor_msgs
 
     double t2 = ros::Time::now().toSec();
 
-//    cout<<"Cost Time:  "<<t2-t1<<endl;
+    cout<<"Cost Time:  "<<t2-t1<<endl;
+
+    ///save the processed Image
+    cv::imwrite("/home/yh/projectedImage.png", image);
 
 //    sleep(5*1000);
 }
